@@ -63,7 +63,7 @@ MAX_TOOL_CALLS_PER_TURN = 10
 MODELS = {
     # Free tier - $0 input/output
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1 [FREE]", 262144),
-    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 [FREE]", 131072),
+    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 123B [FREE]", 262144),
     "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera 671B [FREE]", 163840),
     # Cheap paid - reasoning model
     "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.27/$0.41]", 163840),
