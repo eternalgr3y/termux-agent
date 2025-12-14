@@ -58,23 +58,23 @@ KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 # Prevent infinite tool loops
 MAX_TOOL_CALLS_PER_TURN = 10
 
-# Model ID, Display Name, Context Window, Input $/M, Output $/M, Provider
-# Pricing verified Dec 2025
+# Model ID, Display Name, Context Window, Input $/M, Output $/M, Max Output, Notes
+# Pricing verified Dec 14, 2025 from OpenRouter
 MODELS = {
     # Free tier - $0 input/output (1000 req/day limit)
-    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 262144, 0, 0, "AtlasCloud"),
-    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 123B", 262144, 0, 0, "Mistral"),
-    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera 671B", 163840, 0, 0, "Chutes"),
-    # Cheap paid - reasoning model
-    "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale", 163840, 0.27, 0.41, "Chutes"),
+    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 256000, 0, 0, 32768, "73.4% SWE-Bench, FP16"),
+    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512", 262144, 0, 0, 32768, "123B dense, agentic coding"),
+    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera", 163840, 0, 0, 16384, "671B MoE, <think> reasoning"),
+    # Cheap paid
+    "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale", 163840, 0.27, 0.41, 65536, "FP8, mandatory reasoning"),
 }
 
 def get_model_info():
     """Get full info for current model"""
-    for k, (mid, name, ctx, inp, out, provider) in MODELS.items():
+    for k, (mid, name, ctx, inp, out, max_out, notes) in MODELS.items():
         if mid == MODEL:
-            return {"name": name, "ctx": ctx, "input": inp, "output": out, "provider": provider}
-    return {"name": MODEL, "ctx": 32768, "input": 0, "output": 0, "provider": "Unknown"}
+            return {"name": name, "ctx": ctx, "input": inp, "output": out, "max_out": max_out, "notes": notes}
+    return {"name": MODEL, "ctx": 32768, "input": 0, "output": 0, "max_out": 4096, "notes": ""}
 
 def get_context_window():
     """Get context window for current model"""
@@ -888,14 +888,16 @@ def execute_tool_call(name, arguments):
 
 def show_models():
     print("\n\033[96m=== Models ===\033[0m")
-    for k, (mid, name, ctx, inp, out, provider) in MODELS.items():
+    for k, (mid, name, ctx, inp, out, max_out, notes) in MODELS.items():
         ctx_k = ctx // 1024
+        max_k = max_out // 1024
         if inp == 0 and out == 0:
             price = "FREE"
         else:
-            price = f"${inp}/${out}"
+            price = f"${inp}in/${out}out"
         print(f"  {k}) {name}")
-        print(f"     {ctx_k}k ctx | {price} | {provider}")
+        print(f"     {ctx_k}k ctx | {max_k}k max out | {price}")
+        print(f"     {notes}")
     print()
 
 def select_model():
@@ -903,14 +905,15 @@ def select_model():
     show_models()
     choice = input(f"Select (1-{len(MODELS)}) or model ID: ").strip()
     if choice in MODELS:
-        mid, name, ctx, inp, out, provider = MODELS[choice]
+        mid, name, ctx, inp, out, max_out, notes = MODELS[choice]
         MODEL = mid
         if inp == 0 and out == 0:
             price = "FREE"
         else:
-            price = f"${inp}/${out}/M"
+            price = f"${inp}in/${out}out /M"
         print(f"\033[92m→ {name}\033[0m")
-        print(f"  {ctx//1024}k ctx | {price} | {provider}\n")
+        print(f"  {ctx//1024}k ctx | {max_out//1024}k max out | {price}")
+        print(f"  {notes}\n")
     elif choice:
         MODEL = choice
         print(f"\033[92m→ {MODEL}\033[0m\n")
@@ -954,14 +957,15 @@ def main():
     if info["input"] == 0 and info["output"] == 0:
         price_str = "FREE"
     else:
-        price_str = f"${info['input']}/${info['output']}/M"
+        price_str = f"${info['input']}in/${info['output']}out /M"
 
     print(f"\033[96m{'═'*50}\033[0m")
     print(f"\033[96m  Termux AI Agent\033[0m")
     print(f"\033[96m{'═'*50}\033[0m")
-    print(f"Model:    \033[93m{info['name']}\033[0m")
-    print(f"Context:  {info['ctx']//1024}k | Price: {price_str} | Provider: {info['provider']}")
-    print(f"Dir:      \033[90m{os.getcwd()}\033[0m")
+    print(f"Model:   \033[93m{info['name']}\033[0m")
+    print(f"Context: {info['ctx']//1024}k | Max Out: {info['max_out']//1024}k | {price_str}")
+    print(f"Notes:   {info['notes']}")
+    print(f"Dir:     \033[90m{os.getcwd()}\033[0m")
     print(f"\nTools: read, write, edit, grep, find, run, git, web, memory")
     print(f"Cmds:  /model /clear /session /memory /quit")
     print()
