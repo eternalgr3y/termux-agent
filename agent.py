@@ -51,18 +51,38 @@ AGENT_DIR = Path.home() / ".termux-agent"
 SESSION_FILE = AGENT_DIR / "session.json"
 MEMORY_FILE = AGENT_DIR / "memory.json"
 
-# Auto-compact settings
-MAX_MESSAGES = 40  # Compact when exceeding this
-KEEP_RECENT = 12   # Keep this many recent messages after compact
+# Compact threshold (% of context window)
+COMPACT_THRESHOLD = 0.70  # Compact at 70% full
+KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 
+# Model ID, Display Name, Context Window (tokens)
 MODELS = {
-    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1"),
-    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512"),
-    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera"),
-    "4": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528"),
-    "5": ("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3"),
-    "6": ("x-ai/grok-4-fast:free", "Grok 4 Fast"),
+    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 32768),
+    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512", 131072),
+    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera", 65536),
+    "4": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", 131072),
+    "5": ("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", 131072),
+    "6": ("x-ai/grok-4-fast:free", "Grok 4 Fast", 131072),
 }
+
+def get_context_window():
+    """Get context window for current model"""
+    for k, (mid, name, ctx) in MODELS.items():
+        if mid == MODEL:
+            return ctx
+    return 32768  # Conservative default
+
+def estimate_tokens(text):
+    """Rough token estimate (~4 chars per token)"""
+    return len(text) // 4
+
+def estimate_messages_tokens(messages):
+    """Estimate total tokens in message list"""
+    total = 0
+    for m in messages:
+        total += estimate_tokens(m.get("content", ""))
+        total += 4  # Role overhead
+    return total
 
 SYSTEM_PROMPT = """You are an AI coding assistant in Termux. You have these tools:
 
@@ -175,13 +195,36 @@ def forget_memory(key):
     return f"No memory for: {key}"
 
 def compact_messages(messages, client):
-    """Summarize old messages to reduce context"""
-    if len(messages) <= MAX_MESSAGES:
+    """Summarize old messages based on model's context window"""
+    ctx_window = get_context_window()
+    current_tokens = estimate_messages_tokens(messages)
+
+    # Compact at threshold to leave room for response
+    threshold = int(ctx_window * COMPACT_THRESHOLD)
+
+    if current_tokens <= threshold:
         return messages
 
+    # Need to compact - figure out how many recent messages to keep
     system = messages[0]
-    recent = messages[-KEEP_RECENT:]
-    old = messages[1:-KEEP_RECENT]
+
+    # Keep recent messages that fit in allocated space
+    target_recent_tokens = int(ctx_window * KEEP_RECENT_PCT)
+    recent = []
+    recent_tokens = 0
+
+    for m in reversed(messages[1:]):
+        msg_tokens = estimate_tokens(m.get("content", "")) + 4
+        if recent_tokens + msg_tokens > target_recent_tokens:
+            break
+        recent.insert(0, m)
+        recent_tokens += msg_tokens
+
+    # Everything else gets summarized
+    old = messages[1:len(messages)-len(recent)] if recent else messages[1:]
+
+    if not old:
+        return messages  # Nothing to compact
 
     # Build summary of old conversation
     old_text = "\n".join([
@@ -211,7 +254,9 @@ def compact_messages(messages, client):
         {"role": "assistant", "content": "Understood, I have context from our earlier conversation."},
     ] + recent
 
-    print(f"\033[90m[Compacted {len(old)} messages → summary]\033[0m")
+    old_tokens = estimate_messages_tokens(old)
+    new_tokens = estimate_messages_tokens(compacted)
+    print(f"\033[90m[Compacted {old_tokens:,}→{new_tokens:,} tokens | {ctx_window:,} ctx]\033[0m")
     return compacted
 
 # =============================================================================
@@ -437,8 +482,9 @@ def parse_tool_call(text):
 
 def show_models():
     print("\n\033[96m=== Models ===\033[0m")
-    for k, (mid, name) in MODELS.items():
-        print(f"  {k}) {name}")
+    for k, (mid, name, ctx) in MODELS.items():
+        ctx_k = ctx // 1024
+        print(f"  {k}) {name} ({ctx_k}k ctx)")
     print()
 
 def select_model():
@@ -446,8 +492,9 @@ def select_model():
     show_models()
     choice = input("Select (1-6) or model ID: ").strip()
     if choice in MODELS:
-        MODEL = MODELS[choice][0]
-        print(f"\033[92m→ {MODELS[choice][1]}\033[0m\n")
+        mid, name, ctx = MODELS[choice]
+        MODEL = mid
+        print(f"\033[92m→ {name} ({ctx//1024}k ctx)\033[0m\n")
     elif choice:
         MODEL = choice
         print(f"\033[92m→ {MODEL}\033[0m\n")
@@ -486,17 +533,19 @@ def main():
         messages.append({"role": "user", "content": f"[Persistent memory loaded:\n{mem_context}]"})
         messages.append({"role": "assistant", "content": "I've loaded your persistent memory."})
 
-    # Get model display name
+    # Get model display name and context
     model_name = MODEL
-    for k, (mid, name) in MODELS.items():
+    model_ctx = 32768
+    for k, (mid, name, ctx) in MODELS.items():
         if mid == MODEL:
             model_name = name
+            model_ctx = ctx
             break
 
     print(f"\033[96m{'═'*50}\033[0m")
     print(f"\033[96m  Termux AI Agent\033[0m")
     print(f"\033[96m{'═'*50}\033[0m")
-    print(f"Model: \033[93m{model_name}\033[0m")
+    print(f"Model: \033[93m{model_name}\033[0m ({model_ctx//1024}k ctx)")
     print(f"Dir:   \033[90m{os.getcwd()}\033[0m")
     print(f"\nTools: read, write, edit, grep, find, run, git, web, memory")
     print(f"Cmds:  /model /clear /session /memory /quit")
@@ -519,10 +568,15 @@ def main():
             print("Cleared session.\n")
             continue
         if user_input.lower() in ["/session", "/s"]:
-            print(f"\033[96mSession: {len(messages)-1} messages\033[0m")
-            print(f"File: {SESSION_FILE}")
+            tokens = estimate_messages_tokens(messages)
+            ctx = get_context_window()
+            pct = (tokens / ctx) * 100
+            print(f"\033[96m=== Session ===\033[0m")
+            print(f"Messages: {len(messages)-1}")
+            print(f"Tokens:   ~{tokens:,} / {ctx:,} ({pct:.1f}%)")
+            print(f"Compact:  {'yes' if pct >= COMPACT_THRESHOLD*100 else 'no'} (at {COMPACT_THRESHOLD*100:.0f}%)")
             if SESSION_FILE.exists():
-                print(f"Size: {SESSION_FILE.stat().st_size} bytes")
+                print(f"File:     {SESSION_FILE.stat().st_size:,} bytes")
             print()
             continue
         if user_input.lower() in ["/memory", "/mem"]:
