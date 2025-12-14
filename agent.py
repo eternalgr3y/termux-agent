@@ -57,7 +57,7 @@ KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 
 # Model ID, Display Name, Context Window (tokens)
 MODELS = {
-    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 32768),
+    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 262144),
     "2": ("mistralai/devstral-2512:free", "Devstral 2 2512", 131072),
     "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera", 65536),
     "4": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", 131072),
