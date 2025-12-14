@@ -65,11 +65,9 @@ MODELS = {
     "2": ("moonshotai/kimi-k2:free", "Kimi K2 1T MoE [FREE]", 131072),
     "3": ("mistralai/devstral-2512:free", "Devstral 2 2512 [FREE]", 131072),
     "4": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera [FREE]", 65536),
-    "5": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528 [FREE]", 131072),
-    "6": ("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3 [FREE]", 131072),
-    "7": ("x-ai/grok-4-fast:free", "Grok 4 Fast [FREE]", 131072),
+    "5": ("x-ai/grok-4.1-fast:free", "Grok 4.1 Fast Reasoning [FREE]", 131072),
     # Cheap paid (basically free)
-    "8": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.40/M]", 131072),
+    "6": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.40/M]", 131072),
 }
 
 def get_context_window():
