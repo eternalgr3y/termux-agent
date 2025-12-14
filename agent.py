@@ -61,11 +61,12 @@ MAX_TOOL_CALLS_PER_TURN = 10
 # Model ID, Display Name, Context Window (tokens)
 MODELS = {
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 262144),
-    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512", 131072),
-    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera", 65536),
-    "4": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", 131072),
-    "5": ("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", 131072),
-    "6": ("x-ai/grok-4-fast:free", "Grok 4 Fast", 131072),
+    "2": ("moonshotai/kimi-k2:free", "Kimi K2 (1T MoE)", 131072),
+    "3": ("mistralai/devstral-2512:free", "Devstral 2 2512", 131072),
+    "4": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera", 65536),
+    "5": ("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", 131072),
+    "6": ("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", 131072),
+    "7": ("x-ai/grok-4-fast:free", "Grok 4 Fast", 131072),
 }
 
 def get_context_window():
