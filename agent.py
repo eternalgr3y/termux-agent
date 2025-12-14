@@ -11,6 +11,7 @@ import subprocess
 import time
 import re
 import glob as globlib
+import argparse
 from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.parse import quote_plus
@@ -995,11 +996,64 @@ def select_model():
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Termux AI Agent - Agentic coding assistant",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  agent                    Start with previous session
+  agent --new              Start fresh session
+  agent -m 2               Start with model #2 (Devstral)
+  agent --new -m 3         Fresh session with model #3
+  agent --list-models      Show available models
+"""
+    )
+    parser.add_argument("-n", "--new", "--new-session",
+                        action="store_true",
+                        help="Start a new session (clear previous context)")
+    parser.add_argument("-m", "--model",
+                        type=str,
+                        help="Model number (1-4) or full model ID")
+    parser.add_argument("-l", "--list-models",
+                        action="store_true",
+                        help="List available models and exit")
+    parser.add_argument("--clear-memory",
+                        action="store_true",
+                        help="Clear persistent memory and exit")
+    parser.add_argument("prompt", nargs="*",
+                        help="Optional initial prompt")
+    return parser.parse_args()
+
 def main():
     global MODEL
 
+    args = parse_args()
+
+    # Handle --list-models
+    if args.list_models:
+        show_models()
+        return
+
+    # Handle --clear-memory
+    if args.clear_memory:
+        if MEMORY_FILE.exists():
+            MEMORY_FILE.unlink()
+            print(f"{C.GREEN}✓{C.RESET} Memory cleared")
+        else:
+            print(f"{C.GRAY}No memory to clear{C.RESET}")
+        return
+
+    # Handle --model
+    if args.model:
+        if args.model in MODELS:
+            MODEL = MODELS[args.model][0]
+        else:
+            MODEL = args.model
+
     if not OPENROUTER_API_KEY:
-        print("\033[91mMissing OPENROUTER_API_KEY\033[0m")
+        print(f"{C.RED}Missing OPENROUTER_API_KEY{C.RESET}")
         print("Get free key: https://openrouter.ai/keys")
         print("Then: export OPENROUTER_API_KEY=sk-or-...")
         print("Or:   echo 'OPENROUTER_API_KEY=sk-or-...' > ~/.env")
@@ -1012,11 +1066,16 @@ def main():
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Load previous session
-    prev_session = load_session()
-    if prev_session:
-        messages.extend(prev_session)
-        print(f"{C.GRAY}[Restored {len(prev_session)} messages from last session]{C.RESET}")
+    # Handle --new-session
+    if args.new:
+        clear_session()
+        print(f"{C.GRAY}[Starting fresh session]{C.RESET}")
+    else:
+        # Load previous session
+        prev_session = load_session()
+        if prev_session:
+            messages.extend(prev_session)
+            print(f"{C.GRAY}[Restored {len(prev_session)} messages from last session]{C.RESET}")
 
     # Load memory context for system
     memory = load_memory()
@@ -1045,13 +1104,20 @@ def main():
     print()
 
     last_gen_stats = None  # Store last generation stats
+    initial_prompt = " ".join(args.prompt) if args.prompt else None
 
     while True:
-        try:
-            user_input = input(f"{C.GREEN}You:{C.RESET} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print(f"\n{C.GRAY}Bye!{C.RESET}")
-            break
+        # Use initial prompt from CLI args if provided
+        if initial_prompt:
+            user_input = initial_prompt
+            print(f"{C.GREEN}You:{C.RESET} {user_input}")
+            initial_prompt = None  # Only use once
+        else:
+            try:
+                user_input = input(f"{C.GREEN}You:{C.RESET} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n{C.GRAY}Bye!{C.RESET}")
+                break
 
         if not user_input:
             continue
