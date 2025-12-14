@@ -30,13 +30,28 @@ python agent.py
 
 - `/model` - switch model
 - `/models` - list models
+- `/session` - show session info
+- `/memory` - show persistent memory
+- `/forget <key>` - delete memory item
 - `/clear` - reset conversation
 - `/quit` - exit
 
 ## Tools
 
-The agent can:
-- Read files
-- Write files
-- Run shell commands
-- List directories
+**File Operations:** read_file, write_file, edit_file, list_dir, find_files
+
+**Search:** grep, search_code
+
+**Shell:** run, git
+
+**Web:** web_fetch, web_search
+
+**Memory:** remember, recall, forget
+
+## Features
+
+- **Session Persistence** - Conversations auto-save to `~/.termux-agent/session.json`
+- **Persistent Memory** - Store key-value pairs across sessions
+- **Auto-Compact** - Summarizes old messages when context gets long
+- **Retry Logic** - Auto-retries failed API calls
+- **Model Switching** - Switch between 6 free models on the fly

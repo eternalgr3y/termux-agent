@@ -46,6 +46,15 @@ if env_file.exists():
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 MODEL = os.environ.get("AGENT_MODEL", "kwaipilot/kat-coder-pro:free")
 
+# Session/Memory paths
+AGENT_DIR = Path.home() / ".termux-agent"
+SESSION_FILE = AGENT_DIR / "session.json"
+MEMORY_FILE = AGENT_DIR / "memory.json"
+
+# Auto-compact settings
+MAX_MESSAGES = 40  # Compact when exceeding this
+KEEP_RECENT = 12   # Keep this many recent messages after compact
+
 MODELS = {
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1"),
     "2": ("mistralai/devstral-2512:free", "Devstral 2 2512"),
@@ -76,6 +85,11 @@ WEB:
 - web_fetch(url) - fetch URL as markdown
 - web_search(query) - search the web
 
+MEMORY (persists across sessions):
+- remember(key, value) - save something to memory
+- recall(key?) - get memory (all if no key)
+- forget(key) - delete from memory
+
 Respond with JSON to use tools:
 {"tool": "read_file", "path": "file.py"}
 {"tool": "write_file", "path": "file.py", "content": "..."}
@@ -88,11 +102,117 @@ Respond with JSON to use tools:
 {"tool": "git", "args": "status"}
 {"tool": "web_fetch", "url": "https://example.com"}
 {"tool": "web_search", "query": "python requests tutorial"}
+{"tool": "remember", "key": "project_dir", "value": "/home/user/myproject"}
+{"tool": "recall", "key": "project_dir"}
+{"tool": "recall"}
+{"tool": "forget", "key": "old_key"}
 {"tool": "done", "message": "Task completed"}
 
 For regular chat, respond normally without JSON.
 Chain tools as needed - read before edit, search before modify.
 Always explain what you're doing."""
+
+# =============================================================================
+# SESSION & MEMORY
+# =============================================================================
+
+def ensure_agent_dir():
+    """Create agent data directory"""
+    AGENT_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_session(messages):
+    """Save conversation to disk"""
+    ensure_agent_dir()
+    # Don't save system prompt
+    to_save = [m for m in messages if m.get("role") != "system"]
+    SESSION_FILE.write_text(json.dumps(to_save, indent=2))
+
+def load_session():
+    """Load previous session"""
+    if SESSION_FILE.exists():
+        try:
+            return json.loads(SESSION_FILE.read_text())
+        except:
+            pass
+    return []
+
+def clear_session():
+    """Delete saved session"""
+    if SESSION_FILE.exists():
+        SESSION_FILE.unlink()
+
+def save_memory(key, value):
+    """Save persistent memory item"""
+    ensure_agent_dir()
+    memory = load_memory()
+    memory[key] = value
+    MEMORY_FILE.write_text(json.dumps(memory, indent=2))
+    return f"Saved to memory: {key}"
+
+def load_memory():
+    """Load all memory"""
+    if MEMORY_FILE.exists():
+        try:
+            return json.loads(MEMORY_FILE.read_text())
+        except:
+            pass
+    return {}
+
+def get_memory(key=None):
+    """Get memory item or all memory"""
+    memory = load_memory()
+    if key:
+        return memory.get(key, f"No memory for: {key}")
+    return json.dumps(memory, indent=2) if memory else "(no memories)"
+
+def forget_memory(key):
+    """Delete memory item"""
+    memory = load_memory()
+    if key in memory:
+        del memory[key]
+        MEMORY_FILE.write_text(json.dumps(memory, indent=2))
+        return f"Forgot: {key}"
+    return f"No memory for: {key}"
+
+def compact_messages(messages, client):
+    """Summarize old messages to reduce context"""
+    if len(messages) <= MAX_MESSAGES:
+        return messages
+
+    system = messages[0]
+    recent = messages[-KEEP_RECENT:]
+    old = messages[1:-KEEP_RECENT]
+
+    # Build summary of old conversation
+    old_text = "\n".join([
+        f"{m['role']}: {m['content'][:200]}..." if len(m['content']) > 200 else f"{m['role']}: {m['content']}"
+        for m in old
+    ])
+
+    try:
+        # Use LLM to summarize
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{
+                "role": "user",
+                "content": f"Summarize this conversation in 2-3 sentences, focusing on what was accomplished and key context:\n\n{old_text[:4000]}"
+            }],
+            max_tokens=256,
+        )
+        summary = response.choices[0].message.content
+    except:
+        # Fallback: simple truncation
+        summary = f"[Previous conversation: {len(old)} messages about coding tasks]"
+
+    # Reconstruct with summary
+    compacted = [
+        system,
+        {"role": "user", "content": f"[Context from earlier: {summary}]"},
+        {"role": "assistant", "content": "Understood, I have context from our earlier conversation."},
+    ] + recent
+
+    print(f"\033[90m[Compacted {len(old)} messages → summary]\033[0m")
+    return compacted
 
 # =============================================================================
 # TOOLS
@@ -287,6 +407,9 @@ TOOLS = {
     "git": lambda p: git(p.get("args", "")),
     "web_fetch": lambda p: web_fetch(p.get("url", "")),
     "web_search": lambda p: web_search(p.get("query", "")),
+    "remember": lambda p: save_memory(p.get("key", ""), p.get("value", "")),
+    "recall": lambda p: get_memory(p.get("key")),
+    "forget": lambda p: forget_memory(p.get("key", "")),
     "done": lambda p: None,
 }
 
@@ -350,6 +473,19 @@ def main():
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
+    # Load previous session
+    prev_session = load_session()
+    if prev_session:
+        messages.extend(prev_session)
+        print(f"\033[90m[Restored {len(prev_session)} messages from last session]\033[0m")
+
+    # Load memory context for system
+    memory = load_memory()
+    if memory:
+        mem_context = "\n".join([f"- {k}: {v}" for k, v in memory.items()])
+        messages.append({"role": "user", "content": f"[Persistent memory loaded:\n{mem_context}]"})
+        messages.append({"role": "assistant", "content": "I've loaded your persistent memory."})
+
     # Get model display name
     model_name = MODEL
     for k, (mid, name) in MODELS.items():
@@ -362,8 +498,8 @@ def main():
     print(f"\033[96m{'═'*50}\033[0m")
     print(f"Model: \033[93m{model_name}\033[0m")
     print(f"Dir:   \033[90m{os.getcwd()}\033[0m")
-    print(f"\nTools: read, write, edit, grep, find, run, git, web")
-    print(f"Cmds:  /model /clear /quit")
+    print(f"\nTools: read, write, edit, grep, find, run, git, web, memory")
+    print(f"Cmds:  /model /clear /session /memory /quit")
     print()
 
     while True:
@@ -379,7 +515,30 @@ def main():
             break
         if user_input.lower() in ["/clear", "/c"]:
             messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-            print("Cleared.\n")
+            clear_session()
+            print("Cleared session.\n")
+            continue
+        if user_input.lower() in ["/session", "/s"]:
+            print(f"\033[96mSession: {len(messages)-1} messages\033[0m")
+            print(f"File: {SESSION_FILE}")
+            if SESSION_FILE.exists():
+                print(f"Size: {SESSION_FILE.stat().st_size} bytes")
+            print()
+            continue
+        if user_input.lower() in ["/memory", "/mem"]:
+            mem = load_memory()
+            if mem:
+                print("\033[96m=== Memory ===\033[0m")
+                for k, v in mem.items():
+                    print(f"  {k}: {v[:50]}..." if len(str(v)) > 50 else f"  {k}: {v}")
+            else:
+                print("(no memories)")
+            print()
+            continue
+        if user_input.lower().startswith("/forget "):
+            key = user_input[8:].strip()
+            result = forget_memory(key)
+            print(f"{result}\n")
             continue
         if user_input.lower() in ["/model", "/m"]:
             select_model()
@@ -389,6 +548,9 @@ def main():
             continue
 
         messages.append({"role": "user", "content": user_input})
+
+        # Auto-compact if needed
+        messages = compact_messages(messages, client)
 
         # Agent loop with retry
         while True:
@@ -433,6 +595,9 @@ def main():
             else:
                 print(f"\033[94mAgent:\033[0m {reply}\n")
                 break
+
+        # Save session after each exchange
+        save_session(messages)
 
 if __name__ == "__main__":
     main()
