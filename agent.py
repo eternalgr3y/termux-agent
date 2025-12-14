@@ -632,12 +632,22 @@ TOOL_HANDLERS = {
 def execute_tool_call(name, arguments):
     """Execute a native tool call"""
     try:
-        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        if arguments is None or arguments == "":
+            args = {}
+        elif isinstance(arguments, str):
+            args = json.loads(arguments)
+        elif isinstance(arguments, dict):
+            args = arguments
+        else:
+            args = {}
     except json.JSONDecodeError:
         return f"Error: Invalid arguments for {name}"
 
     if name in TOOL_HANDLERS:
-        return TOOL_HANDLERS[name](args)
+        try:
+            return TOOL_HANDLERS[name](args)
+        except Exception as e:
+            return f"Error in {name}: {e}"
     return f"Unknown tool: {name}"
 
 # =============================================================================
