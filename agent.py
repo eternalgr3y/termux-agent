@@ -59,15 +59,15 @@ KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 MAX_TOOL_CALLS_PER_TURN = 10
 
 # Model ID, Display Name, Context Window (tokens)
+# Pricing verified Dec 2025
 MODELS = {
-    # Free tier
+    # Free tier - $0 input/output
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1 [FREE]", 262144),
-    "2": ("moonshotai/kimi-k2:free", "Kimi K2 1T MoE [FREE]", 131072),
-    "3": ("mistralai/devstral-2512:free", "Devstral 2 2512 [FREE]", 131072),
-    "4": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera [FREE]", 65536),
-    "5": ("x-ai/grok-4.1-fast:free", "Grok 4.1 Fast Reasoning [FREE]", 131072),
-    # Cheap paid (basically free)
-    "6": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.40/M]", 131072),
+    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 [FREE]", 131072),
+    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera [FREE]", 65536),
+    "4": ("meta-llama/llama-4-maverick:free", "Llama 4 Maverick 400B [FREE]", 1048576),
+    # Cheap paid
+    "5": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.27/$0.41]", 131072),
 }
 
 def get_context_window():
