@@ -65,9 +65,8 @@ MODELS = {
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1 [FREE]", 262144),
     "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 [FREE]", 131072),
     "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera 671B [FREE]", 163840),
-    "4": ("meta-llama/llama-4-maverick:free", "Llama 4 Maverick 400B [FREE]", 1048576),
     # Cheap paid
-    "5": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.27/$0.41]", 131072),
+    "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.27/$0.41]", 131072),
 }
 
 def get_context_window():
