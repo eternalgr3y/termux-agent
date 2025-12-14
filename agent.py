@@ -55,6 +55,9 @@ MEMORY_FILE = AGENT_DIR / "memory.json"
 COMPACT_THRESHOLD = 0.70  # Compact at 70% full
 KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 
+# Prevent infinite tool loops
+MAX_TOOL_CALLS_PER_TURN = 10
+
 # Model ID, Display Name, Context Window (tokens)
 MODELS = {
     "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 262144),
@@ -781,6 +784,7 @@ def main():
         messages = compact_messages(messages, client)
 
         # Agent loop with native tool calling
+        tool_call_count = 0
         while True:
             response = None
             for attempt in range(3):
@@ -826,6 +830,7 @@ def main():
 
                 # Execute each tool call
                 for tc in msg.tool_calls:
+                    tool_call_count += 1
                     tool_name = tc.function.name
                     print(f"\033[93m[{tool_name}]\033[0m ", end="")
 
@@ -838,6 +843,14 @@ def main():
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": str(result)
+                    })
+
+                # Check tool call limit
+                if tool_call_count >= MAX_TOOL_CALLS_PER_TURN:
+                    print(f"\033[93m[limit: {MAX_TOOL_CALLS_PER_TURN} tools/turn]\033[0m")
+                    messages.append({
+                        "role": "user",
+                        "content": "Tool limit reached. Please summarize what you found and respond."
                     })
 
                 # Continue loop to let model process tool results
