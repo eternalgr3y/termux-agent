@@ -50,8 +50,25 @@ python agent.py
 
 ## Features
 
+- **Native Tool Calling** - Uses OpenAI-style structured tool calls (not hacky JSON parsing)
 - **Session Persistence** - Conversations auto-save to `~/.termux-agent/session.json`
 - **Persistent Memory** - Store key-value pairs across sessions
-- **Auto-Compact** - Summarizes old messages when context gets long
+- **Smart Auto-Compact** - Token-aware compaction based on each model's context window
 - **Retry Logic** - Auto-retries failed API calls
 - **Model Switching** - Switch between 6 free models on the fly
+
+## Architecture
+
+```
+User Input
+    ↓
+API Request with tools=[...schema...]
+    ↓
+Model returns structured tool_calls (not text)
+    ↓
+Execute tools, return results
+    ↓
+Model processes results, may call more tools
+    ↓
+Final response
+```

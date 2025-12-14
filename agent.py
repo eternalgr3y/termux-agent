@@ -84,53 +84,225 @@ def estimate_messages_tokens(messages):
         total += 4  # Role overhead
     return total
 
-SYSTEM_PROMPT = """You are an AI coding assistant in Termux. You have these tools:
+SYSTEM_PROMPT = """You are an AI coding assistant running in Termux on Android.
 
-FILE OPERATIONS:
-- read_file(path) - read file contents
-- write_file(path, content) - create/overwrite file
-- edit_file(path, old, new) - find and replace text
-- list_dir(path) - list directory
-- find_files(pattern, path?) - glob search for files
+You have tools available for file operations, search, shell commands, web access, and persistent memory.
 
-SEARCH:
-- grep(pattern, path?) - search file contents with regex
-- search_code(query, path?) - search for code patterns
+Guidelines:
+- Read files before editing them
+- Search before modifying unfamiliar code
+- Use memory to persist important context across sessions
+- Chain tools as needed to complete tasks
+- Explain what you're doing as you work
 
-SHELL:
-- run(cmd) - execute shell command
-- git(args) - run git command
+When you're done with a task, just respond normally without calling tools."""
 
-WEB:
-- web_fetch(url) - fetch URL as markdown
-- web_search(query) - search the web
-
-MEMORY (persists across sessions):
-- remember(key, value) - save something to memory
-- recall(key?) - get memory (all if no key)
-- forget(key) - delete from memory
-
-Respond with JSON to use tools:
-{"tool": "read_file", "path": "file.py"}
-{"tool": "write_file", "path": "file.py", "content": "..."}
-{"tool": "edit_file", "path": "file.py", "old": "old text", "new": "new text"}
-{"tool": "list_dir", "path": "."}
-{"tool": "find_files", "pattern": "*.py", "path": "."}
-{"tool": "grep", "pattern": "def main", "path": "."}
-{"tool": "search_code", "query": "function that handles auth"}
-{"tool": "run", "cmd": "npm install"}
-{"tool": "git", "args": "status"}
-{"tool": "web_fetch", "url": "https://example.com"}
-{"tool": "web_search", "query": "python requests tutorial"}
-{"tool": "remember", "key": "project_dir", "value": "/home/user/myproject"}
-{"tool": "recall", "key": "project_dir"}
-{"tool": "recall"}
-{"tool": "forget", "key": "old_key"}
-{"tool": "done", "message": "Task completed"}
-
-For regular chat, respond normally without JSON.
-Chain tools as needed - read before edit, search before modify.
-Always explain what you're doing."""
+# Native OpenAI-style tool definitions
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file to read"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create or overwrite a file with content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file to write"},
+                    "content": {"type": "string", "description": "Content to write to the file"}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Find and replace text in a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file to edit"},
+                    "old": {"type": "string", "description": "Text to find"},
+                    "new": {"type": "string", "description": "Text to replace with"}
+                },
+                "required": ["path", "old", "new"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "List contents of a directory",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: current dir)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_files",
+            "description": "Find files matching a glob pattern",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern like *.py or **/*.js"},
+                    "path": {"type": "string", "description": "Directory to search in (default: current dir)"}
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": "Search file contents with regex pattern",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                    "path": {"type": "string", "description": "File or directory to search (default: current dir)"}
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_code",
+            "description": "Smart code search for functions, classes, and patterns",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for (function name, class, etc)"},
+                    "path": {"type": "string", "description": "Directory to search (default: current dir)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run",
+            "description": "Execute a shell command",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "Shell command to execute"}
+                },
+                "required": ["cmd"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git",
+            "description": "Run a git command",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {"type": "string", "description": "Git arguments (e.g. 'status', 'add .', 'commit -m msg')"}
+                },
+                "required": ["args"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "Fetch a URL and extract readable text content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to fetch"}
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web using DuckDuckGo",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": "Save a key-value pair to persistent memory (survives restarts)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Memory key"},
+                    "value": {"type": "string", "description": "Value to remember"}
+                },
+                "required": ["key", "value"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall",
+            "description": "Retrieve from persistent memory",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Memory key (omit to get all memories)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget",
+            "description": "Delete a key from persistent memory",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Memory key to delete"}
+                },
+                "required": ["key"]
+            }
+        }
+    }
+]
 
 # =============================================================================
 # SESSION & MEMORY
@@ -440,7 +612,7 @@ def web_search(query):
 # TOOL DISPATCH
 # =============================================================================
 
-TOOLS = {
+TOOL_HANDLERS = {
     "read_file": lambda p: read_file(p.get("path", "")),
     "write_file": lambda p: write_file(p.get("path", ""), p.get("content", "")),
     "edit_file": lambda p: edit_file(p.get("path", ""), p.get("old", ""), p.get("new", "")),
@@ -455,26 +627,18 @@ TOOLS = {
     "remember": lambda p: save_memory(p.get("key", ""), p.get("value", "")),
     "recall": lambda p: get_memory(p.get("key")),
     "forget": lambda p: forget_memory(p.get("key", "")),
-    "done": lambda p: None,
 }
 
-def execute_tool(tool_call):
-    """Execute a tool call"""
-    tool = tool_call.get("tool", "")
-    if tool in TOOLS:
-        return TOOLS[tool](tool_call)
-    return f"Unknown tool: {tool}"
-
-def parse_tool_call(text):
-    """Extract JSON tool call from response"""
+def execute_tool_call(name, arguments):
+    """Execute a native tool call"""
     try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start != -1 and end > start:
-            return json.loads(text[start:end])
-    except:
-        pass
-    return None
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except json.JSONDecodeError:
+        return f"Error: Invalid arguments for {name}"
+
+    if name in TOOL_HANDLERS:
+        return TOOL_HANDLERS[name](args)
+    return f"Unknown tool: {name}"
 
 # =============================================================================
 # UI
@@ -606,17 +770,18 @@ def main():
         # Auto-compact if needed
         messages = compact_messages(messages, client)
 
-        # Agent loop with retry
+        # Agent loop with native tool calling
         while True:
-            reply = None
+            response = None
             for attempt in range(3):
                 try:
                     response = client.chat.completions.create(
                         model=MODEL,
                         messages=messages,
-                        max_tokens=4096,
+                        tools=TOOL_DEFINITIONS,
+                        tool_choice="auto",
+                        max_tokens=16384,  # KAT-Coder supports up to 32k output
                     )
-                    reply = response.choices[0].message.content
                     break
                 except Exception as e:
                     if attempt < 2:
@@ -625,30 +790,55 @@ def main():
                     else:
                         print(f"\033[91mError: {e}\033[0m\n")
 
-            if not reply:
+            if not response:
                 break
 
-            messages.append({"role": "assistant", "content": reply})
-            tool_call = parse_tool_call(reply)
+            msg = response.choices[0].message
 
-            if tool_call:
-                tool_name = tool_call.get("tool", "")
-                print(f"\033[93m[{tool_name}]\033[0m ", end="")
+            # Check for tool calls
+            if msg.tool_calls:
+                # Add assistant message with tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                })
 
-                if tool_name == "done":
-                    print(tool_call.get("message", "Done"))
-                    break
+                # Execute each tool call
+                for tc in msg.tool_calls:
+                    tool_name = tc.function.name
+                    print(f"\033[93m[{tool_name}]\033[0m ", end="")
 
-                result = execute_tool(tool_call)
-                if result:
-                    display = result[:300] + "..." if len(str(result)) > 300 else result
+                    result = execute_tool_call(tool_name, tc.function.arguments)
+                    display = str(result)[:300] + "..." if len(str(result)) > 300 else result
                     print(display)
-                    messages.append({"role": "user", "content": f"Tool result:\n{result}"})
-                else:
-                    break
-            else:
-                print(f"\033[94mAgent:\033[0m {reply}\n")
-                break
+
+                    # Add tool result
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": str(result)
+                    })
+
+                # Continue loop to let model process tool results
+                continue
+
+            # No tool calls - just a text response
+            if msg.content:
+                messages.append({"role": "assistant", "content": msg.content})
+                print(f"\033[94mAgent:\033[0m {msg.content}\n")
+
+            break
 
         # Save session after each exchange
         save_session(messages)
