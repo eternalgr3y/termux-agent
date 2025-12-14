@@ -58,23 +58,27 @@ KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 # Prevent infinite tool loops
 MAX_TOOL_CALLS_PER_TURN = 10
 
-# Model ID, Display Name, Context Window (tokens)
+# Model ID, Display Name, Context Window, Input $/M, Output $/M, Provider
 # Pricing verified Dec 2025
 MODELS = {
-    # Free tier - $0 input/output
-    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1 [FREE]", 262144),
-    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 123B [FREE]", 262144),
-    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera 671B [FREE]", 163840),
+    # Free tier - $0 input/output (1000 req/day limit)
+    "1": ("kwaipilot/kat-coder-pro:free", "KAT-Coder-Pro V1", 262144, 0, 0, "AtlasCloud"),
+    "2": ("mistralai/devstral-2512:free", "Devstral 2 2512 123B", 262144, 0, 0, "Mistral"),
+    "3": ("tngtech/deepseek-r1t2-chimera:free", "DeepSeek R1T2 Chimera 671B", 163840, 0, 0, "Chutes"),
     # Cheap paid - reasoning model
-    "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale [$0.27/$0.41]", 163840),
+    "4": ("deepseek/deepseek-v3.2-speciale", "DeepSeek V3.2 Speciale", 163840, 0.27, 0.41, "Chutes"),
 }
+
+def get_model_info():
+    """Get full info for current model"""
+    for k, (mid, name, ctx, inp, out, provider) in MODELS.items():
+        if mid == MODEL:
+            return {"name": name, "ctx": ctx, "input": inp, "output": out, "provider": provider}
+    return {"name": MODEL, "ctx": 32768, "input": 0, "output": 0, "provider": "Unknown"}
 
 def get_context_window():
     """Get context window for current model"""
-    for k, (mid, name, ctx) in MODELS.items():
-        if mid == MODEL:
-            return ctx
-    return 32768  # Conservative default
+    return get_model_info()["ctx"]
 
 def estimate_tokens(text):
     """Rough token estimate (~4 chars per token)"""
@@ -884,19 +888,29 @@ def execute_tool_call(name, arguments):
 
 def show_models():
     print("\n\033[96m=== Models ===\033[0m")
-    for k, (mid, name, ctx) in MODELS.items():
+    for k, (mid, name, ctx, inp, out, provider) in MODELS.items():
         ctx_k = ctx // 1024
-        print(f"  {k}) {name} ({ctx_k}k ctx)")
+        if inp == 0 and out == 0:
+            price = "FREE"
+        else:
+            price = f"${inp}/${out}"
+        print(f"  {k}) {name}")
+        print(f"     {ctx_k}k ctx | {price} | {provider}")
     print()
 
 def select_model():
     global MODEL
     show_models()
-    choice = input("Select (1-6) or model ID: ").strip()
+    choice = input(f"Select (1-{len(MODELS)}) or model ID: ").strip()
     if choice in MODELS:
-        mid, name, ctx = MODELS[choice]
+        mid, name, ctx, inp, out, provider = MODELS[choice]
         MODEL = mid
-        print(f"\033[92m→ {name} ({ctx//1024}k ctx)\033[0m\n")
+        if inp == 0 and out == 0:
+            price = "FREE"
+        else:
+            price = f"${inp}/${out}/M"
+        print(f"\033[92m→ {name}\033[0m")
+        print(f"  {ctx//1024}k ctx | {price} | {provider}\n")
     elif choice:
         MODEL = choice
         print(f"\033[92m→ {MODEL}\033[0m\n")
@@ -935,20 +949,19 @@ def main():
         messages.append({"role": "user", "content": f"[Persistent memory loaded:\n{mem_context}]"})
         messages.append({"role": "assistant", "content": "I've loaded your persistent memory."})
 
-    # Get model display name and context
-    model_name = MODEL
-    model_ctx = 32768
-    for k, (mid, name, ctx) in MODELS.items():
-        if mid == MODEL:
-            model_name = name
-            model_ctx = ctx
-            break
+    # Get model display info
+    info = get_model_info()
+    if info["input"] == 0 and info["output"] == 0:
+        price_str = "FREE"
+    else:
+        price_str = f"${info['input']}/${info['output']}/M"
 
     print(f"\033[96m{'═'*50}\033[0m")
     print(f"\033[96m  Termux AI Agent\033[0m")
     print(f"\033[96m{'═'*50}\033[0m")
-    print(f"Model: \033[93m{model_name}\033[0m ({model_ctx//1024}k ctx)")
-    print(f"Dir:   \033[90m{os.getcwd()}\033[0m")
+    print(f"Model:    \033[93m{info['name']}\033[0m")
+    print(f"Context:  {info['ctx']//1024}k | Price: {price_str} | Provider: {info['provider']}")
+    print(f"Dir:      \033[90m{os.getcwd()}\033[0m")
     print(f"\nTools: read, write, edit, grep, find, run, git, web, memory")
     print(f"Cmds:  /model /clear /session /memory /quit")
     print()
