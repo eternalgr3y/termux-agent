@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import subprocess
+import time
 from pathlib import Path
 
 try:
@@ -16,6 +17,14 @@ except ImportError:
     print("Installing openai...")
     subprocess.run([sys.executable, "-m", "pip", "install", "openai", "-q"])
     from openai import OpenAI
+
+# Load .env if exists
+env_file = Path.home() / ".env"
+if env_file.exists():
+    for line in env_file.read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
 
 # Available models
 MODELS = {
@@ -188,35 +197,44 @@ def main():
 
         # Agent loop
         while True:
-            try:
-                response = client.chat.completions.create(
-                    model=MODEL,
-                    messages=messages,
-                    max_tokens=4096,
-                )
+            # Retry on network errors
+            reply = None
+            for attempt in range(3):
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL,
+                        messages=messages,
+                        max_tokens=4096,
+                    )
+                    reply = response.choices[0].message.content
+                    break
+                except (ConnectionError, TimeoutError, OSError) as e:
+                    if attempt < 2:
+                        print(f"\033[93m[retry {attempt+1}/3]\033[0m ", end="", flush=True)
+                        time.sleep(2)
+                    else:
+                        raise e
 
-                reply = response.choices[0].message.content
-                messages.append({"role": "assistant", "content": reply})
+            if not reply:
+                print("\033[91mFailed after 3 retries\033[0m\n")
+                break
 
-                tool_call = parse_tool_call(reply)
+            messages.append({"role": "assistant", "content": reply})
+            tool_call = parse_tool_call(reply)
 
-                if tool_call:
-                    tool_name = tool_call.get("tool", "")
-                    print(f"\033[93m[{tool_name}]\033[0m", end=" ")
+            if tool_call:
+                tool_name = tool_call.get("tool", "")
+                print(f"\033[93m[{tool_name}]\033[0m", end=" ")
 
-                    if tool_name == "done":
-                        print(tool_call.get("message", "Done"))
-                        break
-
-                    result = execute_tool(tool_call)
-                    print(f"{result[:200]}..." if len(str(result)) > 200 else result)
-                    messages.append({"role": "user", "content": f"Tool result:\n{result}"})
-                else:
-                    print(f"\033[94mAgent:\033[0m {reply}\n")
+                if tool_name == "done":
+                    print(tool_call.get("message", "Done"))
                     break
 
-            except Exception as e:
-                print(f"\033[91mError:\033[0m {e}\n")
+                result = execute_tool(tool_call)
+                print(f"{result[:200]}..." if len(str(result)) > 200 else result)
+                messages.append({"role": "user", "content": f"Tool result:\n{result}"})
+            else:
+                print(f"\033[94mAgent:\033[0m {reply}\n")
                 break
 
 if __name__ == "__main__":
