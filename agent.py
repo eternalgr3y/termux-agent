@@ -87,18 +87,66 @@ def estimate_messages_tokens(messages):
         total += 4  # Role overhead
     return total
 
-SYSTEM_PROMPT = """You are an AI coding assistant running in Termux on Android.
+SYSTEM_PROMPT = """You are a senior software engineer operating as an autonomous coding agent in Termux on Android. You excel at understanding codebases, planning implementations, and executing precise changes.
 
-You have tools available for file operations, search, shell commands, web access, and persistent memory.
+## Core Principles
 
-Guidelines:
-- Read files before editing them
-- Search before modifying unfamiliar code
-- Use memory to persist important context across sessions
-- Chain tools as needed to complete tasks
-- Explain what you're doing as you work
+1. **Understand Before Acting**: Always read relevant code before modifying it. Use `project_context` for new codebases, `grep`/`search_code` to locate specific patterns.
 
-When you're done with a task, just respond normally without calling tools."""
+2. **Plan Complex Tasks**: For multi-step work, use `plan_task` to create a structured plan. Mark steps complete with `complete_step` as you progress. This keeps you organized and shows progress.
+
+3. **Minimal, Precise Changes**: Make the smallest edit that solves the problem. Don't refactor unrelated code. Don't add features that weren't requested.
+
+4. **Verify Your Work**: After making changes, verify they work (run tests, check syntax, confirm the fix). Don't assume success.
+
+5. **Efficient Tool Use**:
+   - Use `batch_edit` for multiple related changes instead of sequential `edit_file` calls
+   - Use `project_context` once to understand structure, not repeatedly
+   - Limit web searches to 2-3 per query - synthesize results, don't over-research
+   - Use `remember` to store key findings you'll need later
+
+## Tool Selection Guide
+
+**Understanding Code:**
+- `project_context` → Get project structure + config files (do this FIRST for new projects)
+- `read_file` → Read specific file contents
+- `grep` / `search_code` → Find patterns, functions, classes
+- `find_files` → Locate files by name/pattern
+
+**Modifying Code:**
+- `edit_file` → Single find-and-replace edit
+- `batch_edit` → Multiple edits across files (prefer this for refactoring)
+- `write_file` → Create new files or complete rewrites
+
+**Execution:**
+- `run` → Execute shell commands (build, test, run scripts)
+- `git` → Version control operations
+
+**Research:**
+- `web_search` → Find documentation, solutions, examples (limit: 2-3 searches)
+- `web_fetch` → Read specific URLs
+
+**Organization:**
+- `plan_task` → Create/view step-by-step plans
+- `complete_step` → Mark plan steps done
+- `remember`/`recall` → Persistent memory across sessions
+
+## Response Style
+
+- Be concise and direct
+- Explain your reasoning briefly before acting
+- When showing code changes, explain what changed and why
+- If something fails, diagnose and retry with a different approach
+- Ask clarifying questions only when truly ambiguous
+
+## Constraints
+
+- Never make destructive changes without explicit confirmation
+- Never commit to git unless asked
+- Never expose secrets or credentials
+- Stay focused on the requested task - don't scope creep
+
+You have a 256k token context window. Use it wisely - load relevant context, but don't dump entire codebases unnecessarily."""
 
 # Native OpenAI-style tool definitions
 TOOL_DEFINITIONS = [
@@ -302,6 +350,79 @@ TOOL_DEFINITIONS = [
                     "key": {"type": "string", "description": "Memory key to delete"}
                 },
                 "required": ["key"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_edit",
+            "description": "Apply multiple find-and-replace edits across multiple files in one operation",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "description": "List of edits to apply",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "File path"},
+                                "old": {"type": "string", "description": "Text to find"},
+                                "new": {"type": "string", "description": "Replacement text"}
+                            },
+                            "required": ["path", "old", "new"]
+                        }
+                    }
+                },
+                "required": ["edits"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "project_context",
+            "description": "Load project structure and key config files (package.json, README, etc.) to understand the codebase",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Project root directory (default: current dir)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_task",
+            "description": "Create a step-by-step plan for a complex task, or view the current plan",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Description of the task to plan"},
+                    "steps": {
+                        "type": "array",
+                        "description": "List of steps to complete the task (omit to view current plan)",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_step",
+            "description": "Mark a step in the current plan as completed",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "step_num": {"type": "integer", "description": "Step number to mark complete (1-indexed)"}
+                },
+                "required": ["step_num"]
             }
         }
     }
@@ -562,6 +683,105 @@ def git(args):
     """Run git command"""
     return run(f"git {args}")
 
+def batch_edit(edits):
+    """Apply multiple edits across files"""
+    results = []
+    for edit in edits:
+        path = edit.get("path", "")
+        old = edit.get("old", "")
+        new = edit.get("new", "")
+        if path and old:
+            result = edit_file(path, old, new)
+            results.append(f"{path}: {result}")
+        else:
+            results.append(f"Invalid edit: {edit}")
+    return "\n".join(results)
+
+def project_context(path="."):
+    """Auto-load project structure and key files"""
+    p = Path(path).expanduser()
+    context = []
+
+    # Directory structure (2 levels deep)
+    context.append("=== Project Structure ===")
+    try:
+        for item in sorted(p.iterdir()):
+            if item.name.startswith('.') and item.name not in ['.env.example', '.gitignore']:
+                continue
+            prefix = "📁" if item.is_dir() else "📄"
+            context.append(f"{prefix} {item.name}")
+            if item.is_dir():
+                try:
+                    for sub in sorted(item.iterdir())[:10]:
+                        if not sub.name.startswith('.'):
+                            sp = "  📁" if sub.is_dir() else "  📄"
+                            context.append(f"{sp} {sub.name}")
+                except:
+                    pass
+    except Exception as e:
+        context.append(f"Error listing: {e}")
+
+    # Key config files
+    key_files = [
+        "package.json", "pyproject.toml", "setup.py", "Cargo.toml",
+        "go.mod", "requirements.txt", "Makefile", "README.md",
+        ".gitignore", "tsconfig.json", "vite.config.js", "webpack.config.js"
+    ]
+
+    context.append("\n=== Key Files ===")
+    for kf in key_files:
+        kp = p / kf
+        if kp.exists():
+            try:
+                content = kp.read_text()[:2000]
+                context.append(f"\n--- {kf} ---")
+                context.append(content)
+            except:
+                pass
+
+    return "\n".join(context)
+
+def plan_task(task, steps=None):
+    """Create or update a task plan"""
+    ensure_agent_dir()
+    plan_file = AGENT_DIR / "current_plan.json"
+
+    if steps:
+        # Save new plan
+        plan = {
+            "task": task,
+            "steps": [{"step": s, "status": "pending"} for s in steps],
+            "created": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        plan_file.write_text(json.dumps(plan, indent=2))
+        return f"Plan created with {len(steps)} steps:\n" + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(steps))
+    else:
+        # Read existing plan
+        if plan_file.exists():
+            plan = json.loads(plan_file.read_text())
+            lines = [f"Task: {plan['task']}", "Steps:"]
+            for i, s in enumerate(plan['steps']):
+                status = "✓" if s['status'] == 'done' else "○"
+                lines.append(f"  {status} {i+1}. {s['step']}")
+            return "\n".join(lines)
+        return "No active plan. Create one with steps parameter."
+
+def complete_step(step_num):
+    """Mark a plan step as complete"""
+    ensure_agent_dir()
+    plan_file = AGENT_DIR / "current_plan.json"
+
+    if not plan_file.exists():
+        return "No active plan"
+
+    plan = json.loads(plan_file.read_text())
+    idx = step_num - 1
+    if 0 <= idx < len(plan['steps']):
+        plan['steps'][idx]['status'] = 'done'
+        plan_file.write_text(json.dumps(plan, indent=2))
+        return f"Step {step_num} marked complete: {plan['steps'][idx]['step']}"
+    return f"Invalid step number: {step_num}"
+
 def web_fetch(url):
     """Fetch URL and convert to readable text"""
     try:
@@ -619,10 +839,12 @@ TOOL_HANDLERS = {
     "read_file": lambda p: read_file(p.get("path", "")),
     "write_file": lambda p: write_file(p.get("path", ""), p.get("content", "")),
     "edit_file": lambda p: edit_file(p.get("path", ""), p.get("old", ""), p.get("new", "")),
+    "batch_edit": lambda p: batch_edit(p.get("edits", [])),
     "list_dir": lambda p: list_dir(p.get("path", ".")),
     "find_files": lambda p: find_files(p.get("pattern", "*"), p.get("path", ".")),
     "grep": lambda p: grep(p.get("pattern", ""), p.get("path", ".")),
     "search_code": lambda p: search_code(p.get("query", ""), p.get("path", ".")),
+    "project_context": lambda p: project_context(p.get("path", ".")),
     "run": lambda p: run(p.get("cmd", "")),
     "git": lambda p: git(p.get("args", "")),
     "web_fetch": lambda p: web_fetch(p.get("url", "")),
@@ -630,6 +852,8 @@ TOOL_HANDLERS = {
     "remember": lambda p: save_memory(p.get("key", ""), p.get("value", "")),
     "recall": lambda p: get_memory(p.get("key")),
     "forget": lambda p: forget_memory(p.get("key", "")),
+    "plan_task": lambda p: plan_task(p.get("task", ""), p.get("steps")),
+    "complete_step": lambda p: complete_step(p.get("step_num", 0)),
 }
 
 def execute_tool_call(name, arguments):
@@ -783,7 +1007,7 @@ def main():
         # Auto-compact if needed
         messages = compact_messages(messages, client)
 
-        # Agent loop with native tool calling
+        # Agent loop with native tool calling + streaming
         tool_call_count = 0
         while True:
             response = None
@@ -794,7 +1018,8 @@ def main():
                         messages=messages,
                         tools=TOOL_DEFINITIONS,
                         tool_choice="auto",
-                        max_tokens=16384,  # KAT-Coder supports up to 32k output
+                        max_tokens=16384,
+                        stream=True,
                     )
                     break
                 except Exception as e:
@@ -807,41 +1032,74 @@ def main():
             if not response:
                 break
 
-            msg = response.choices[0].message
+            # Collect streamed response
+            content = ""
+            tool_calls = {}  # id -> {name, arguments}
+            print(f"\033[94mAgent:\033[0m ", end="", flush=True)
+
+            for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+
+                # Stream text content
+                if delta.content:
+                    print(delta.content, end="", flush=True)
+                    content += delta.content
+
+                # Collect tool calls
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls:
+                            tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc.id:
+                            tool_calls[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                tool_calls[idx]["name"] = tc.function.name
+                            if tc.function.arguments:
+                                tool_calls[idx]["arguments"] += tc.function.arguments
+
+            # End streaming line if we printed content
+            if content and not content.endswith("\n"):
+                print()
 
             # Check for tool calls
-            if msg.tool_calls:
+            if tool_calls:
+                if content:
+                    print()  # Newline after any content
+
+                # Build tool_calls list
+                tc_list = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]}
+                    }
+                    for tc in tool_calls.values()
+                ]
+
                 # Add assistant message with tool calls
                 messages.append({
                     "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        }
-                        for tc in msg.tool_calls
-                    ]
+                    "content": content or "",
+                    "tool_calls": tc_list
                 })
 
                 # Execute each tool call
-                for tc in msg.tool_calls:
+                for tc in tool_calls.values():
                     tool_call_count += 1
-                    tool_name = tc.function.name
-                    print(f"\033[93m[{tool_name}]\033[0m ", end="")
+                    print(f"\033[93m[{tc['name']}]\033[0m ", end="")
 
-                    result = execute_tool_call(tool_name, tc.function.arguments)
+                    result = execute_tool_call(tc["name"], tc["arguments"])
                     display = str(result)[:300] + "..." if len(str(result)) > 300 else result
                     print(display)
 
                     # Add tool result
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc["id"],
                         "content": str(result)
                     })
 
@@ -857,9 +1115,9 @@ def main():
                 continue
 
             # No tool calls - just a text response
-            if msg.content:
-                messages.append({"role": "assistant", "content": msg.content})
-                print(f"\033[94mAgent:\033[0m {msg.content}\n")
+            if content:
+                messages.append({"role": "assistant", "content": content})
+                print()
 
             break
 

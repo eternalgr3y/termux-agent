@@ -1,12 +1,12 @@
 # Termux AI Agent
 
-A lightweight agentic coding assistant for Termux using OpenRouter free models.
+A powerful agentic coding assistant for Termux using OpenRouter free models. Features streaming responses, native tool calling, task planning, and persistent memory.
 
 ## Setup
 
 ```bash
-# Install dependency
-pip install openai
+# Install dependencies
+pip install openai requests beautifulsoup4 lxml
 
 # Set API key (get free key at https://openrouter.ai/keys)
 export OPENROUTER_API_KEY="sk-or-your-key"
@@ -17,58 +17,90 @@ python agent.py
 
 ## Models
 
-| # | Model | Best For |
-|---|-------|----------|
-| 1 | KAT-Coder-Pro V1 | Agentic coding (73% SWE-Bench) |
-| 2 | Devstral 2 2512 | Multi-file edits (123B) |
-| 3 | DeepSeek R1T2 Chimera | Reasoning tasks |
-| 4 | DeepSeek R1 0528 | Complex reasoning (671B) |
-| 5 | DeepSeek Chat V3 | Fast general coding |
-| 6 | Grok 4 Fast | Fast responses |
+| # | Model | Context | Best For |
+|---|-------|---------|----------|
+| 1 | KAT-Coder-Pro V1 | 256k | Agentic coding (73% SWE-Bench) |
+| 2 | Devstral 2 2512 | 128k | Multi-file edits |
+| 3 | DeepSeek R1T2 Chimera | 64k | Reasoning tasks |
+| 4 | DeepSeek R1 0528 | 128k | Complex reasoning |
+| 5 | DeepSeek Chat V3 | 128k | Fast general coding |
+| 6 | Grok 4 Fast | 128k | Quick responses |
 
 ## Commands
 
 - `/model` - switch model
 - `/models` - list models
-- `/session` - show session info
+- `/session` - show token usage & context %
 - `/memory` - show persistent memory
 - `/forget <key>` - delete memory item
 - `/clear` - reset conversation
 - `/quit` - exit
 
-## Tools
+## Tools (18 total)
 
-**File Operations:** read_file, write_file, edit_file, list_dir, find_files
+**File Operations:**
+- `read_file` - read file contents
+- `write_file` - create/overwrite file
+- `edit_file` - find and replace in file
+- `batch_edit` - multiple edits across files
+- `list_dir` - list directory
+- `find_files` - glob pattern search
 
-**Search:** grep, search_code
+**Search:**
+- `grep` - regex search in files
+- `search_code` - smart code pattern search
+- `project_context` - load project structure + configs
 
-**Shell:** run, git
+**Shell:**
+- `run` - execute shell command
+- `git` - git operations
 
-**Web:** web_fetch, web_search
+**Web:**
+- `web_fetch` - fetch URL as text
+- `web_search` - DuckDuckGo search
 
-**Memory:** remember, recall, forget
+**Memory:**
+- `remember` - save to persistent memory
+- `recall` - retrieve from memory
+- `forget` - delete from memory
+
+**Planning:**
+- `plan_task` - create step-by-step plans
+- `complete_step` - mark plan steps done
 
 ## Features
 
-- **Native Tool Calling** - Uses OpenAI-style structured tool calls (not hacky JSON parsing)
-- **Session Persistence** - Conversations auto-save to `~/.termux-agent/session.json`
-- **Persistent Memory** - Store key-value pairs across sessions
-- **Smart Auto-Compact** - Token-aware compaction based on each model's context window
-- **Retry Logic** - Auto-retries failed API calls
-- **Model Switching** - Switch between 6 free models on the fly
+- **Streaming Responses** - See output as it generates
+- **Native Tool Calling** - Structured tool calls, not JSON parsing
+- **Task Planning** - Break down complex tasks into steps
+- **Batch Editing** - Edit multiple files in one operation
+- **Project Context** - Auto-load project structure and configs
+- **Session Persistence** - Conversations saved to disk
+- **Persistent Memory** - Key-value store across sessions
+- **Smart Auto-Compact** - Summarizes old context when near limit
+- **Tool Call Limits** - Prevents infinite loops (10/turn max)
 
 ## Architecture
 
 ```
 User Input
     ↓
-API Request with tools=[...schema...]
+[Load session + memory]
     ↓
-Model returns structured tool_calls (not text)
+API Request (stream=True, tools=[18 schemas])
     ↓
-Execute tools, return results
+Stream response chunks to terminal
     ↓
-Model processes results, may call more tools
+If tool_calls: execute → feed results → loop
     ↓
-Final response
+Save session
+```
+
+## Data Storage
+
+```
+~/.termux-agent/
+├── session.json      # Conversation history
+├── memory.json       # Persistent key-value store
+└── current_plan.json # Active task plan
 ```
