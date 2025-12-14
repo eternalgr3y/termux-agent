@@ -58,6 +58,24 @@ KEEP_RECENT_PCT = 0.25    # Keep 25% for recent messages
 # Prevent infinite tool loops
 MAX_TOOL_CALLS_PER_TURN = 10
 
+# UI Colors
+class C:
+    """ANSI color codes"""
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    # Colors
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    WHITE = "\033[97m"
+    GRAY = "\033[90m"
+    # Backgrounds
+    BG_GRAY = "\033[100m"
+
 # Model ID, Display Name, Context Window, Input $/M, Output $/M, Max Output, Notes
 # Pricing verified Dec 14, 2025 from OpenRouter
 MODELS = {
@@ -557,7 +575,7 @@ def compact_messages(messages, client):
 
     old_tokens = estimate_messages_tokens(old)
     new_tokens = estimate_messages_tokens(compacted)
-    print(f"\033[90m[Compacted {old_tokens:,}→{new_tokens:,} tokens | {ctx_window:,} ctx]\033[0m")
+    print(f"{C.GRAY}[Compacted {old_tokens:,}→{new_tokens:,} tokens | {ctx_window:,} ctx]{C.RESET}")
     return compacted
 
 # =============================================================================
@@ -836,6 +854,61 @@ def web_search(query):
     except Exception as e:
         return f"Error searching: {e}"
 
+def fetch_generation_stats(gen_id):
+    """Fetch generation stats from OpenRouter after a request"""
+    try:
+        url = f"https://openrouter.ai/api/v1/generation?id={gen_id}"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("data", {})
+        return None
+    except:
+        return None
+
+def format_stats_line(stats):
+    """Format generation stats into a compact status line"""
+    if not stats:
+        return None
+
+    parts = []
+
+    # Tokens
+    tok_in = stats.get("tokens_prompt", 0)
+    tok_out = stats.get("tokens_completion", 0)
+    if tok_in or tok_out:
+        parts.append(f"{tok_in}→{tok_out} tok")
+
+    # Cost
+    cost = stats.get("total_cost", 0)
+    if cost and cost > 0:
+        if cost < 0.001:
+            parts.append(f"${cost:.6f}")
+        elif cost < 0.01:
+            parts.append(f"${cost:.4f}")
+        else:
+            parts.append(f"${cost:.3f}")
+    elif cost == 0:
+        parts.append("FREE")
+
+    # Generation time
+    gen_time = stats.get("generation_time")
+    if gen_time:
+        parts.append(f"{gen_time}s")
+
+    # Provider (if available - check various field names)
+    provider = stats.get("provider_name") or stats.get("provider") or stats.get("origin", "")
+    if provider and "openrouter" not in provider.lower():
+        # Clean up provider name
+        if "/" in provider:
+            provider = provider.split("/")[-1]
+        parts.append(provider[:20])
+
+    return " │ ".join(parts) if parts else None
+
 # =============================================================================
 # TOOL DISPATCH
 # =============================================================================
@@ -887,36 +960,36 @@ def execute_tool_call(name, arguments):
 # =============================================================================
 
 def show_models():
-    print("\n\033[96m=== Models ===\033[0m")
+    print(f"\n{C.CYAN}{'─'*50}{C.RESET}")
+    print(f"{C.CYAN}{C.BOLD}  MODELS{C.RESET}")
+    print(f"{C.CYAN}{'─'*50}{C.RESET}")
     for k, (mid, name, ctx, inp, out, max_out, notes) in MODELS.items():
         ctx_k = ctx // 1024
         max_k = max_out // 1024
         if inp == 0 and out == 0:
-            price = "FREE"
+            price = f"{C.GREEN}FREE{C.RESET}"
         else:
-            price = f"${inp}in/${out}out"
-        print(f"  {k}) {name}")
-        print(f"     {ctx_k}k ctx | {max_k}k max out | {price}")
-        print(f"     {notes}")
+            price = f"{C.YELLOW}${inp}/{out}{C.RESET}"
+        print(f"  {C.WHITE}{C.BOLD}{k}{C.RESET}) {C.CYAN}{name}{C.RESET}")
+        print(f"     {C.GRAY}{ctx_k}k ctx │ {max_k}k out │ {price} {C.GRAY}│ {notes}{C.RESET}")
     print()
 
 def select_model():
     global MODEL
     show_models()
-    choice = input(f"Select (1-{len(MODELS)}) or model ID: ").strip()
+    choice = input(f"{C.GRAY}Select (1-{len(MODELS)}):{C.RESET} ").strip()
     if choice in MODELS:
         mid, name, ctx, inp, out, max_out, notes = MODELS[choice]
         MODEL = mid
         if inp == 0 and out == 0:
-            price = "FREE"
+            price = f"{C.GREEN}FREE{C.RESET}"
         else:
-            price = f"${inp}in/${out}out /M"
-        print(f"\033[92m→ {name}\033[0m")
-        print(f"  {ctx//1024}k ctx | {max_out//1024}k max out | {price}")
-        print(f"  {notes}\n")
+            price = f"{C.YELLOW}${inp}/${out} /M{C.RESET}"
+        print(f"{C.GREEN}✓{C.RESET} {C.CYAN}{C.BOLD}{name}{C.RESET}")
+        print(f"  {C.GRAY}{ctx//1024}k ctx │ {max_out//1024}k out │ {price}{C.RESET}\n")
     elif choice:
         MODEL = choice
-        print(f"\033[92m→ {MODEL}\033[0m\n")
+        print(f"{C.GREEN}✓{C.RESET} {C.CYAN}{MODEL}{C.RESET}\n")
 
 # =============================================================================
 # MAIN
@@ -943,7 +1016,7 @@ def main():
     prev_session = load_session()
     if prev_session:
         messages.extend(prev_session)
-        print(f"\033[90m[Restored {len(prev_session)} messages from last session]\033[0m")
+        print(f"{C.GRAY}[Restored {len(prev_session)} messages from last session]{C.RESET}")
 
     # Load memory context for system
     memory = load_memory()
@@ -955,26 +1028,29 @@ def main():
     # Get model display info
     info = get_model_info()
     if info["input"] == 0 and info["output"] == 0:
-        price_str = "FREE"
+        price_str = f"{C.GREEN}FREE{C.RESET}"
     else:
-        price_str = f"${info['input']}in/${info['output']}out /M"
+        price_str = f"{C.YELLOW}${info['input']}/${info['output']} /M{C.RESET}"
 
-    print(f"\033[96m{'═'*50}\033[0m")
-    print(f"\033[96m  Termux AI Agent\033[0m")
-    print(f"\033[96m{'═'*50}\033[0m")
-    print(f"Model:   \033[93m{info['name']}\033[0m")
-    print(f"Context: {info['ctx']//1024}k | Max Out: {info['max_out']//1024}k | {price_str}")
-    print(f"Notes:   {info['notes']}")
-    print(f"Dir:     \033[90m{os.getcwd()}\033[0m")
-    print(f"\nTools: read, write, edit, grep, find, run, git, web, memory")
-    print(f"Cmds:  /model /clear /session /memory /quit")
+    print(f"\n{C.CYAN}{'═'*50}{C.RESET}")
+    print(f"{C.CYAN}{C.BOLD}  TERMUX AI AGENT{C.RESET}")
+    print(f"{C.CYAN}{'═'*50}{C.RESET}")
+    print(f"{C.WHITE}Model:{C.RESET}  {C.CYAN}{C.BOLD}{info['name']}{C.RESET}")
+    print(f"{C.WHITE}Specs:{C.RESET}  {C.GRAY}{info['ctx']//1024}k ctx │ {info['max_out']//1024}k out │ {price_str}")
+    if info['notes']:
+        print(f"{C.WHITE}Notes:{C.RESET}  {C.GRAY}{info['notes']}{C.RESET}")
+    print(f"{C.WHITE}Dir:{C.RESET}    {C.GRAY}{os.getcwd()}{C.RESET}")
+    print(f"\n{C.GRAY}Tools: read write edit grep find run git web memory plan{C.RESET}")
+    print(f"{C.GRAY}Cmds:  /model /clear /session /memory /stats /quit{C.RESET}")
     print()
+
+    last_gen_stats = None  # Store last generation stats
 
     while True:
         try:
-            user_input = input("\033[92mYou:\033[0m ").strip()
+            user_input = input(f"{C.GREEN}You:{C.RESET} ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
+            print(f"\n{C.GRAY}Bye!{C.RESET}")
             break
 
         if not user_input:
@@ -984,34 +1060,68 @@ def main():
         if user_input.lower() in ["/clear", "/c"]:
             messages = [{"role": "system", "content": SYSTEM_PROMPT}]
             clear_session()
-            print("Cleared session.\n")
+            last_gen_stats = None
+            print(f"{C.GREEN}✓{C.RESET} Session cleared\n")
             continue
         if user_input.lower() in ["/session", "/s"]:
             tokens = estimate_messages_tokens(messages)
             ctx = get_context_window()
             pct = (tokens / ctx) * 100
-            print(f"\033[96m=== Session ===\033[0m")
-            print(f"Messages: {len(messages)-1}")
-            print(f"Tokens:   ~{tokens:,} / {ctx:,} ({pct:.1f}%)")
-            print(f"Compact:  {'yes' if pct >= COMPACT_THRESHOLD*100 else 'no'} (at {COMPACT_THRESHOLD*100:.0f}%)")
+            print(f"\n{C.CYAN}{'─'*40}{C.RESET}")
+            print(f"{C.CYAN}{C.BOLD}  SESSION{C.RESET}")
+            print(f"{C.CYAN}{'─'*40}{C.RESET}")
+            print(f"  Messages: {C.WHITE}{len(messages)-1}{C.RESET}")
+            print(f"  Tokens:   {C.WHITE}~{tokens:,}{C.RESET} / {ctx:,} ({pct:.1f}%)")
+            bar_len = 30
+            filled = int(bar_len * pct / 100)
+            bar_color = C.GREEN if pct < 50 else (C.YELLOW if pct < 70 else C.RED)
+            bar = f"{bar_color}{'█'*filled}{C.GRAY}{'░'*(bar_len-filled)}{C.RESET}"
+            print(f"  Context:  [{bar}]")
             if SESSION_FILE.exists():
-                print(f"File:     {SESSION_FILE.stat().st_size:,} bytes")
+                print(f"  File:     {C.GRAY}{SESSION_FILE.stat().st_size:,} bytes{C.RESET}")
             print()
+            continue
+        if user_input.lower() in ["/stats"]:
+            if last_gen_stats:
+                print(f"\n{C.CYAN}{'─'*40}{C.RESET}")
+                print(f"{C.CYAN}{C.BOLD}  LAST GENERATION{C.RESET}")
+                print(f"{C.CYAN}{'─'*40}{C.RESET}")
+                print(f"  Tokens In:  {C.WHITE}{last_gen_stats.get('tokens_prompt', 'N/A')}{C.RESET}")
+                print(f"  Tokens Out: {C.WHITE}{last_gen_stats.get('tokens_completion', 'N/A')}{C.RESET}")
+                cost = last_gen_stats.get('total_cost', 0)
+                if cost == 0:
+                    print(f"  Cost:       {C.GREEN}FREE{C.RESET}")
+                else:
+                    print(f"  Cost:       {C.YELLOW}${cost:.6f}{C.RESET}")
+                if last_gen_stats.get('generation_time'):
+                    print(f"  Time:       {C.WHITE}{last_gen_stats.get('generation_time')}s{C.RESET}")
+                if last_gen_stats.get('model'):
+                    print(f"  Model:      {C.GRAY}{last_gen_stats.get('model')}{C.RESET}")
+                # Check for provider info
+                provider = last_gen_stats.get('provider_name') or last_gen_stats.get('provider')
+                if provider:
+                    print(f"  Provider:   {C.MAGENTA}{provider}{C.RESET}")
+                print()
+            else:
+                print(f"{C.GRAY}No generation stats yet{C.RESET}\n")
             continue
         if user_input.lower() in ["/memory", "/mem"]:
             mem = load_memory()
             if mem:
-                print("\033[96m=== Memory ===\033[0m")
+                print(f"\n{C.CYAN}{'─'*40}{C.RESET}")
+                print(f"{C.CYAN}{C.BOLD}  MEMORY{C.RESET}")
+                print(f"{C.CYAN}{'─'*40}{C.RESET}")
                 for k, v in mem.items():
-                    print(f"  {k}: {v[:50]}..." if len(str(v)) > 50 else f"  {k}: {v}")
+                    v_display = f"{v[:40]}..." if len(str(v)) > 40 else v
+                    print(f"  {C.WHITE}{k}{C.RESET}: {C.GRAY}{v_display}{C.RESET}")
             else:
-                print("(no memories)")
+                print(f"{C.GRAY}No memories stored{C.RESET}")
             print()
             continue
         if user_input.lower().startswith("/forget "):
             key = user_input[8:].strip()
             result = forget_memory(key)
-            print(f"{result}\n")
+            print(f"{C.GREEN}✓{C.RESET} {result}\n")
             continue
         if user_input.lower() in ["/model", "/m"]:
             select_model()
@@ -1027,6 +1137,8 @@ def main():
 
         # Agent loop with native tool calling + streaming
         tool_call_count = 0
+        generation_id = None
+
         while True:
             response = None
             for attempt in range(3):
@@ -1042,10 +1154,10 @@ def main():
                     break
                 except Exception as e:
                     if attempt < 2:
-                        print(f"\033[93m[retry {attempt+1}]\033[0m ", end="", flush=True)
+                        print(f"{C.YELLOW}[retry {attempt+1}]{C.RESET} ", end="", flush=True)
                         time.sleep(2)
                     else:
-                        print(f"\033[91mError: {e}\033[0m\n")
+                        print(f"{C.RED}Error: {e}{C.RESET}\n")
 
             if not response:
                 break
@@ -1053,9 +1165,13 @@ def main():
             # Collect streamed response
             content = ""
             tool_calls = {}  # id -> {name, arguments}
-            print(f"\033[94mAgent:\033[0m ", end="", flush=True)
+            print(f"{C.BLUE}Agent:{C.RESET} ", end="", flush=True)
 
             for chunk in response:
+                # Capture generation ID from first chunk
+                if hasattr(chunk, 'id') and chunk.id and not generation_id:
+                    generation_id = chunk.id
+
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if not delta:
                     continue
@@ -1108,7 +1224,7 @@ def main():
                 # Execute each tool call
                 for tc in tool_calls.values():
                     tool_call_count += 1
-                    print(f"\033[93m[{tc['name']}]\033[0m ", end="")
+                    print(f"{C.YELLOW}[{tc['name']}]{C.RESET} ", end="")
 
                     result = execute_tool_call(tc["name"], tc["arguments"])
                     display = str(result)[:300] + "..." if len(str(result)) > 300 else result
@@ -1123,7 +1239,7 @@ def main():
 
                 # Check tool call limit
                 if tool_call_count >= MAX_TOOL_CALLS_PER_TURN:
-                    print(f"\033[93m[limit: {MAX_TOOL_CALLS_PER_TURN} tools/turn]\033[0m")
+                    print(f"{C.YELLOW}[limit: {MAX_TOOL_CALLS_PER_TURN} tools/turn]{C.RESET}")
                     messages.append({
                         "role": "user",
                         "content": "Tool limit reached. Please summarize what you found and respond."
@@ -1135,6 +1251,15 @@ def main():
             # No tool calls - just a text response
             if content:
                 messages.append({"role": "assistant", "content": content})
+
+            # Fetch and display generation stats
+            if generation_id:
+                stats = fetch_generation_stats(generation_id)
+                if stats:
+                    last_gen_stats = stats
+                    stats_line = format_stats_line(stats)
+                    if stats_line:
+                        print(f"{C.GRAY}[{stats_line}]{C.RESET}")
                 print()
 
             break
